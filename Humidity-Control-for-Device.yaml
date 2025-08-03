@@ -1,0 +1,142 @@
+blueprint:
+  name: Humidity Control for Device (Version 7)
+  description: Turns a device (like a switch or fan) on or off based on a humidity sensor's reading. Uses separate on/off thresholds to prevent rapid cycling. Also monitors manual overrides and adjusts based on current humidity conditions.
+  domain: automation
+  author: Eatfresh87
+  input:
+    humidity_sensor:
+      name: Humidity Sensor
+      description: The sensor that provides the humidity reading.
+      selector:
+        entity:
+          domain: sensor
+          device_class: humidity
+    target_device:
+      name: Device to Control
+      description: The switch, fan, or other device to turn on/off.
+      selector:
+        entity:
+          domain:
+            - switch
+            - fan
+            - light
+    humidity_on_threshold:
+      name: Turn-On Humidity
+      description: The humidity level (%) above which the device will turn ON.
+      default: 65
+      selector:
+        number:
+          min: 0
+          max: 100
+          unit_of_measurement: "%"
+    humidity_off_threshold:
+      name: Turn-Off Humidity
+      description: The humidity level (%) below which the device will turn OFF. This should be lower than the turn-on level.
+      default: 55
+      selector:
+        number:
+          min: 0
+          max: 100
+          unit_of_measurement: "%"
+    manual_override_delay:
+      name: Manual Override Check Delay
+      description: How long to wait (in seconds) before checking humidity after a manual switch operation.
+      default: 30
+      selector:
+        number:
+          min: 5
+          max: 300
+          unit_of_measurement: "seconds"
+    enable_manual_override_check:
+      name: Enable Manual Override Checking
+      description: When enabled, the automation will check humidity levels after manual switch operations and override if necessary.
+      default: true
+      selector:
+        boolean:
+
+# This mode ensures that if the humidity fluctuates, the automation will restart,
+# correctly evaluating the current state.
+mode: restart
+
+trigger:
+  # Humidity-based triggers
+  - platform: numeric_state
+    entity_id: !input humidity_sensor
+    above: !input humidity_on_threshold
+    id: "humidity_turn_on"
+  - platform: numeric_state
+    entity_id: !input humidity_sensor
+    below: !input humidity_off_threshold
+    id: "humidity_turn_off"
+  
+  # Manual switch operation triggers
+  - platform: state
+    entity_id: !input target_device
+    to: "on"
+    id: "manual_turn_on"
+  - platform: state
+    entity_id: !input target_device
+    to: "off"
+    id: "manual_turn_off"
+
+variables:
+  humidity_sensor_entity: !input humidity_sensor
+  current_humidity: "{{ states(humidity_sensor_entity) | float }}"
+  on_threshold: !input humidity_on_threshold
+  off_threshold: !input humidity_off_threshold
+  override_enabled: !input enable_manual_override_check
+  delay_seconds: !input manual_override_delay
+
+action:
+  - choose:
+      # Handle humidity-triggered turn on
+      - conditions:
+          - condition: trigger
+            id: "humidity_turn_on"
+        sequence:
+          - service: homeassistant.turn_on
+            entity_id: !input target_device
+            
+      # Handle humidity-triggered turn off
+      - conditions:
+          - condition: trigger
+            id: "humidity_turn_off"
+        sequence:
+          - service: homeassistant.turn_off
+            entity_id: !input target_device
+            
+      # Handle manual turn on - check if humidity actually requires it to be off
+      - conditions:
+          - condition: trigger
+            id: "manual_turn_on"
+          - condition: template
+            value_template: "{{ override_enabled }}"
+        sequence:
+          - delay:
+              seconds: "{{ delay_seconds }}"
+          - condition: template
+            value_template: "{{ current_humidity < off_threshold }}"
+          - service: homeassistant.turn_off
+            entity_id: !input target_device
+          - service: system_log.write
+            data:
+              message: "Humidity Control: Overriding manual turn-on. Humidity ({{ current_humidity }}%) is below off threshold ({{ off_threshold }}%)."
+              level: info
+              
+      # Handle manual turn off - check if humidity actually requires it to be on
+      - conditions:
+          - condition: trigger
+            id: "manual_turn_off"
+          - condition: template
+            value_template: "{{ override_enabled }}"
+        sequence:
+          - delay:
+              seconds: "{{ delay_seconds }}"
+          - condition: template
+            value_template: "{{ current_humidity > on_threshold }}"
+          - service: homeassistant.turn_on
+            entity_id: !input target_device
+          - service: system_log.write
+            data:
+              message: "Humidity Control: Overriding manual turn-off. Humidity ({{ current_humidity }}%) is above on threshold ({{ on_threshold }}%)."
+              level: info
