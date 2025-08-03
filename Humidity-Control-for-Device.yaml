@@ -2,7 +2,7 @@ blueprint:
   name: Humidity Control for Device (Version 7)
   description: Turns a device (like a switch or fan) on or off based on a humidity sensor's reading. Uses separate on/off thresholds to prevent rapid cycling. Also monitors manual overrides and adjusts based on current humidity conditions.
   domain: automation
-  author: Eatfresh87
+  author: captianslow
   input:
     humidity_sensor:
       name: Humidity Sensor
@@ -139,4 +139,5 @@ action:
           - service: system_log.write
             data:
               message: "Humidity Control: Overriding manual turn-off. Humidity ({{ current_humidity }}%) is above on threshold ({{ on_threshold }}%)."
+
               level: info
